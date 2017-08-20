@@ -110,6 +110,22 @@ class _TransactionCtx(object):
         global _db_ctx
         _db_ctx.connection.rollback()
 
+class Dict(dict):
+    def __init__(self, names = (), values = (), **kw):
+        super(Dict, self).__init__(**kw)
+        for k, v in zip(names, values):
+            self[k] = v
+
+    def __getattr__(self, key):
+        try:
+            return self[key]
+        except KeyError:
+            raise AttributeError(r" 'Dict' object has no attribute '%s' " % key)
+
+    def __setattr__(self, key, value):
+        self[key] = value
+
+
 def connection():
     return _ConnectionCtx()
 
@@ -124,8 +140,25 @@ def with_connection(func):                                  # 自定义装饰器
     return _wrapper
 
 @with_connection
-def select(sql, *args):
-    pass
+def _select(sql, first, *args):
+    global _db_ctx
+    cursor = None
+    sql = sql.replace('?', '%s')
+    logging.info('SQL: %s,ARGS: %S' % (sql, args))
+    try:
+        cursor = _db_ctx.connection.cursor()
+        cursor.execute(sql, args)
+        if cursor.description:
+            name = [x[0] for x in cursor.description]
+        if first:
+            values = cursor.fetchone()
+            if not values:
+                return None
+            return Dict(name, values)
+        return [Dict(name, x) for x in cursor.fetchall()]
+    finally:
+        if cursor:
+            cursor.close()
 
 @with_connection
 def update(sql, *args):
