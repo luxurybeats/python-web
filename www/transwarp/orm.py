@@ -29,7 +29,6 @@ orm模块设计的原因：
 """
 
 import db
-import time
 import logging
 
 
@@ -263,9 +262,9 @@ class ModelMetaclass(type):
             logging.info('[MAPPING] Found mapping: %s => %s' % (k, v))
             # 检查重复主键
             if v.primary_key:
-                if primary_key:                                 #不含primary_key 返回 False
+                if primary_key:                                 # 不含primary_key 返回 False
                     raise TypeError('Cannot define more than 1 primary key in class: %s' % name)
-                if v.updatable:                                 #不含updatable 返回 True
+                if v.updatable:                                 # 不含updatable 返回 True
                     logging.warning('NOTE: change primary key to non-updatable.')
                     v.updatable = False
                 if v.nullable:                                  # 不含 nullable 返回False
@@ -286,6 +285,179 @@ class ModelMetaclass(type):
             if not trigger in attrs:
                 attrs[trigger] =None
         return type.__new__(cls, name, bases, attrs)
+
+class Model(dict):
+    """
+        这是一个基类，用户在子类中 定义映射关系， 因此我们需要动态扫描子类属性 ，
+    从中抽取出类属性， 完成 类 <==> 表 的映射， 这里使用 metaclass 来实现。
+    最后将扫描出来的结果保存在成类属性
+        "__table__" : 表名
+        "__mappings__": 字段对象(字段的所有属性，见Field类)
+        "__primary_key__": 主键字段
+        "__sql__": 创建表时执行的sql
+    子类在实例化时，需要完成 实例属性 <==> 行值 的映射， 这里使用 定制dict 来实现。
+        Model 从字典继承而来，并且通过"__getattr__","__setattr__"将Model重写，
+        使得其像javascript中的 object对象那样，可以通过属性访问 值比如 a.key = value
+
+    """
+    __metaclass__ = ModelMetaclass              # 指定使用ModelMetaclass来制定类
+
+    def __init__(self, **kw):
+        super(Model, self).__init__(**kw)
+
+    def __getattr__(self, key):
+        """
+        get时生效，比如 a[key],  a.get(key)
+        get时 返回属性的值
+        :param key:
+        :return:
+        """
+        try:
+            return self[key]
+        except KeyError:
+            raise AttributeError(r"'Dict' object has no attribute '%s'" % key)
+
+    def __setattr__(self, key, value):
+        """
+        set时生效，比如 a[key] = value, a = {'key1': value1, 'key2': value2}
+        set时添加属性
+        :param key:
+        :param value:
+        :return:
+        """
+        self[key] = value
+
+    @classmethod                                        # 类方法
+    def get(cls, pk):
+        """
+        获取主键
+        :param pk:
+        :return:
+        """
+        d = db.select_one('select * from %s where %s=?' % (cls.__table__, cls.__primary_key__.name). pk)
+        return cls(**d) if d else None
+
+    @classmethod
+    def find_first(cls, where, *args):
+        """
+        通过where语句进行条件查询，返回1个查询结果。如果有多个查询结果
+        仅取第一个，如果没有结果，则返回None
+        :param where:
+        :param args:
+        :return:
+        """
+        d = db.select_one('select * from %s %s ' % (cls.__table__, where), *args)
+        return cls(**d) if d else None
+
+    @classmethod
+    def find_all(cls, *args):
+        """
+        查询所有字段， 将结果以一个列表返回
+        :param args:
+        :return:
+        """
+        L = db.select('select * from `%s`' % cls.__table__)
+        return [cls(**d) for d in L]
+
+    @classmethod
+    def find_by(cls, where, *args):
+        """
+        通过where语句进行条件查询，将结果以一个列表返回
+        :param where:
+        :param args:
+        :return:
+        """
+        L = db.select('select * from `%s` %s' % (cls.__table__, where), *args)
+        return [cls(**d) for d in L]
+
+    @classmethod
+    def count_all(cls):
+        """
+        执行 select count(pk) from table语句，返回一个数值
+        :return:
+        """
+        return db.select('select count(`%s`) from `%s`' % (cls.__primary_key__.name, cls.__table__))
+
+    @classmethod
+    def count_by(cls, where, *arg):
+        """
+        通过select count(pk) from table where ...语句进行查询， 返回一个数值
+        :return:
+        """
+        return db.select_int('sekect count(`%s`) from `%s` %s' % (cls.__primary_key__.name, cls.__table__, where), *arg)
+
+    def update(self):
+        """
+        如果该行的字段属性有 updatable，代表该字段可以被更新
+        用于定义的表（继承Model的类）是一个 Dict对象，键值会变成实例的属性
+        所以可以通过属性来判断 用户是否定义了该字段的值
+            如果有属性， 就使用用户传入的值
+            如果无属性， 则调用字段对象的 default属性传入
+            具体见 Field类 的 default 属性
+        通过的db对象的update接口执行SQL
+            SQL: update `user` set `passwd`=%s,`last_modified`=%s,`name`=%s where id=%s,
+                 ARGS: (u'******', 1441878476.202391, u'Michael', 10190
+
+        :return:
+        """
+        self.pre_update and self.pre_update()
+        L = []
+        args = []
+        for k, v in self.__mappings__.iteritems():
+            if v.updatable:
+                if hasattr(self, k):            # self 对象 含有属性 k吗 含有 返回True
+                    arg = getattr(self, k)      # 从self 对象获取属性 k  self.k
+                else:
+                    arg = v.default
+                    setattr(self, k , arg)
+                L.append('`%s`=?' % k)
+                args.append(arg)
+        pk = self.__primary_key__.name
+        args.append(getattr(self, pk))          # 从self 对象获取属性 pk  self.pk
+        db.update('updata `%s` set %s where %s=?' % (self.__table__, ','.join(L), pk),*args)
+        return self
+
+    def delete(self):
+        """
+         通过db对象的 update接口 执行SQL
+            SQL: delete from `user` where `id`=%s, ARGS: (10190,)
+        :return:
+        """
+        self.pre_delete and self.pre_delete()
+        pk = self.__primary_key__.name
+        args = (getattr(self, pk), )
+        db.update('delete from `%s` where `%s`=?' % (self.__table__, pk), *args)
+        return self
+
+    def insert(self):
+        """
+        通过db对象的insert接口执行SQL
+            SQL: insert into `user` (`passwd`,`last_modified`,`id`,`name`,`email`) values (%s,%s,%s,%s,%s),
+            ARGS: ('******', 1441878476.202391, 10190, 'Michael', 'orm@db.org')
+        :return:
+        """
+        self.pre_insert and  self.pre_insert()
+        params = {}
+        for k, v in self.__mappings__.iteritems():
+            if v.insertable:
+                if not hasattr(self, k):
+                    setattr(self, k, v.default)
+                params[v.name] = getattr(self, k)
+        db.insert('%s' % self.__table__, **params)
+        return self
+
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.DEBUG)
+    db.create_engine('root','123456', 'test','localhost')
+    db.update('drop table if exists user')
+    db.update('create table user (id int primary key, name text, email text, passwd text, last_modified real)')
+    import doctest
+    doctest.testmod()
+
+
+
+
+
 
 
 

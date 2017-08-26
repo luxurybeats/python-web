@@ -283,7 +283,7 @@ def _profiling(start, sql = ''):
     if t > 0.1:
         logging.warning('[PROFILING] [DB] %s: %s' % (t, sql))
 
-def creat_engin(user, password, database, host = '127.0.0.1', port = 3306, **kw):
+def create_engine(user, password, database, host = '127.0.0.1', port = 3306, **kw):
     """
     db模型的核心函数，用于连接数据库, 生成全局对象engine，
     engine对象持有数据库连接
@@ -331,8 +331,8 @@ def _select(sql, first, *args):
     :return:
     """
     global _db_ctx
-    cursor = None                                       #cursor获得python执行Mysql命令的方法,也就是我们所说的操作游标
-    sql = sql.replace('?', '%s')
+    cursor = None                                       # cursor获得python执行Mysql命令的方法,也就是我们所说的操作游标
+    sql = sql.replace('?', '%s')                       # str.replace(old, new, max) 替换不超过max次
     logging.info('SQL: %s, ARGS: %s' % (sql, args))
     try:
         cursor = _db_ctx.connection.cursor()
@@ -450,7 +450,7 @@ def do_in_transaction():
 
 if __name__ == '__main__':
     logging.basicConfig(level = logging.DEBUG)
-    creat_engin('root','123456', 'test','localhost')
+    create_engine('root','123456', 'test','localhost')
     update('drop table if exists user')
     update('create table user (id int primary key, name text, email text, passwd text, last_modified real)')
     import doctest
