@@ -316,7 +316,7 @@ def with_connection(func):                                  # 自定义装饰器
     :return:
     """
     @functools.wraps(func)                                  #  保留原属性的装饰器
-    def _wrapper(*args,**kw):
+    def _wrapper(*args, **kw):
         with _ConnectionCtx():
             return func(*args, **kw)
     return _wrapper
@@ -427,7 +427,7 @@ def insert(table, **kw):
     """
     cols, args = zip(*kw.iteritems())
     sql = 'insert into `%s` (%s) values (%s)' % (table, ','.join(['`%s`' % col for col in cols]), ','.join(['?' for i in range(len(cols))]))
-    return _update(sql, *kw)
+    return _update(sql, *args)
 
 
 def with_transaction(func):

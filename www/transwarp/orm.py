@@ -245,9 +245,9 @@ class ModelMetaclass(type):
         """
         if name == 'Model':
             return type.__new__(cls, name, bases, attrs)
+         # 添加子类信息
         if not hasattr(cls, 'subclasses'):
             cls.subclasses = {}
-        # 添加子类信息
         if not name in cls.subclasses:
             cls.subclasses[name] = name
         else:
@@ -258,20 +258,21 @@ class ModelMetaclass(type):
         primary_key = None
         for k, v in attrs.iteritems():
             if isinstance(v, Field):
-                v.name = k
-            logging.info('[MAPPING] Found mapping: %s => %s' % (k, v))
+                if not v.name:
+                    v.name = k
+                logging.info('[MAPPING] Found mapping: %s => %s' % (k, v))
             # 检查重复主键
-            if v.primary_key:
-                if primary_key:                                 # 不含primary_key 返回 False
-                    raise TypeError('Cannot define more than 1 primary key in class: %s' % name)
-                if v.updatable:                                 # 不含updatable 返回 True
-                    logging.warning('NOTE: change primary key to non-updatable.')
-                    v.updatable = False
-                if v.nullable:                                  # 不含 nullable 返回False
-                    logging.warning('NOTE: change primary key to non-nullable.')
-                    v.nullable = False
-                primary_key = v
-            mappings[k] = v
+                if v.primary_key:
+                    if primary_key:                                 # 不含primary_key 返回 False
+                        raise TypeError('Cannot define more than 1 primary key in class: %s' % name)
+                    if v.updatable:                                 # 不含updatable 返回 True
+                        logging.warning('NOTE: change primary key to non-updatable.')
+                        v.updatable = False
+                    if v.nullable:                                  # 不含 nullable 返回False
+                        logging.warning('NOTE: change primary key to non-nullable.')
+                        v.nullable = False
+                    primary_key = v
+                mappings[k] = v
         # 检查主键是否存在
         if not primary_key:
             raise TypeError('Primary key not defined in class: %s' % name)
@@ -280,6 +281,7 @@ class ModelMetaclass(type):
         if not '__table__' in attrs:
             attrs['__table__'] = name.lower()       # 假设表名和类名一致
         attrs['__mappings__'] = mappings            # 保存属性和列的映射关系
+        attrs['__primary_key__'] = primary_key
         attrs['__sql__'] = lambda self: _gen_sql(attrs['__table__'], mappings)
         for trigger in _triggers:
             if not trigger in attrs:
@@ -315,7 +317,7 @@ class Model(dict):
         try:
             return self[key]
         except KeyError:
-            raise AttributeError(r"'Dict' object has no attribute '%s'" % key)
+            raise AttributeError(r"'Dict' object has no attribute '%s'" % key)  # r无需转义
 
     def __setattr__(self, key, value):
         """
@@ -449,7 +451,7 @@ class Model(dict):
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
     db.create_engine('root','123456', 'test','localhost')
-    db.update('drop table if exists user')
+    db.update('drop table  user')
     db.update('create table user (id int primary key, name text, email text, passwd text, last_modified real)')
     import doctest
     doctest.testmod()
