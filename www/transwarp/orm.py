@@ -34,20 +34,20 @@ import logging
 
 _triggers = frozenset(['pre_insert', 'pre_update', 'pre_delete'])
 
-"""
-同set 但为不可变集合 不能修改 set能修改
-a = set('luxury')
->>> a
-set(['y', 'x', 'r', 'u', 'l'])
->>> a.add('lx')
->>> a
-set(['l', 'r', 'u', 'y', 'x', 'lx'])
-a = frozenset ('luxrury')
->>> a
-frozenset(['y', 'x', 'r', 'u', 'l'])
->>> a.add('z')
-Traceback (most recent call last):
-"""
+###########################
+#同set 但为不可变集合 不能修改 set能修改
+# a = set('luxury')
+# >>> a
+# set(['y', 'x', 'r', 'u', 'l'])
+# >>> a.add('lx')
+# >>> a
+# set(['l', 'r', 'u', 'y', 'x', 'lx'])
+# a = frozenset ('luxrury')
+# >>> a
+# frozenset(['y', 'x', 'r', 'u', 'l'])
+# >>> a.add('z')
+# Traceback (most recent call last):
+#############################
 
 def _gen_sql(table_name, mappings):
     """

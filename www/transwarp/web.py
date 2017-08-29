@@ -33,35 +33,480 @@ WSGI概要：
 
 """
 import types, os, re, cgi, sys, time, datetime, functools, mimetypes, threading, logging, traceback, urllib
+import utils
 from db import Dict
+
+try:
+    from cStringIO import StringIO
+except ImportError:
+    from StringIO import StringIO
+#################################################################
+# 实现事物数据接口, 实现request 数据和response数据的存储,
+# 是一个全局ThreadLocal对象
+#################################################################
 
 ctx = threading.local()     # 全局ThreadLocal对象
 
-class HttpError(Exception):
+_RE_REPONSE_STATUS = re.compile(r'^\d\d\d(\ [\w\ ]+)?$')        #\w 表示字符类 包括大小写字母和数字
+_HEADER_X_POWERED_BY = ('X-Powered-By','transwarp/1.0')
+
+#  用于时区转换
+_TIMEDELTA_ZERO = datetime.timedelta(0)
+_RE_TZ = re.compile('^([\+\-])([0-9]{1,2})\:([0-9]{1,2})$')
+
+# 响应状态
+_RESPONSE_STATUSES = {
+    # Informational
+    100: 'Continue',
+    101: 'Switching Protocols',
+    102: 'Processing',
+
+    # Successful
+    200: 'OK',
+    201: 'Created',
+    202: 'Accepted',
+    203: 'Non-Authoritative Information',
+    204: 'No Content',
+    205: 'Reset Content',
+    206: 'Partial Content',
+    207: 'Multi Status',
+    226: 'IM Used',
+
+    # Redirection
+    300: 'Multiple Choices',
+    301: 'Moved Permanently',
+    302: 'Found',
+    303: 'See Other',
+    304: 'Not Modified',
+    305: 'Use Proxy',
+    307: 'Temporary Redirect',
+
+    # Client Error
+    400: 'Bad Request',
+    401: 'Unauthorized',
+    402: 'Payment Required',
+    403: 'Forbidden',
+    404: 'Not Found',
+    405: 'Method Not Allowed',
+    406: 'Not Acceptable',
+    407: 'Proxy Authentication Required',
+    408: 'Request Timeout',
+    409: 'Conflict',
+    410: 'Gone',
+    411: 'Length Required',
+    412: 'Precondition Failed',
+    413: 'Request Entity Too Large',
+    414: 'Request URI Too Long',
+    415: 'Unsupported Media Type',
+    416: 'Requested Range Not Satisfiable',
+    417: 'Expectation Failed',
+    418: "I'm a teapot",
+    422: 'Unprocessable Entity',
+    423: 'Locked',
+    424: 'Failed Dependency',
+    426: 'Upgrade Required',
+
+    # Server Error
+    500: 'Internal Server Error',
+    501: 'Not Implemented',
+    502: 'Bad Gateway',
+    503: 'Service Unavailable',
+    504: 'Gateway Timeout',
+    505: 'HTTP Version Not Supported',
+    507: 'Insufficient Storage',
+    510: 'Not Extended',
+
+}
+
+_RESPONSE_HEADERS = (
+    'Accept-Ranges',
+    'Age',
+    'Allow',
+    'Cache-Control',
+    'Connection',
+    'Content-Encoding',
+    'Content-Language',
+    'Content-Length',
+    'Content-Location',
+    'Content-MD5',
+    'Content-Disposition',
+    'Content-Range',
+    'Content-Type',
+    'Date',
+    'ETag',
+    'Expires',
+    'Last-Modified',
+    'Link',
+    'Location',
+    'P3P',
+    'Pragma',
+    'Proxy-Authenticate',
+    'Refresh',
+    'Retry-After',
+    'Server',
+    'Set-Cookie',
+    'Strict-Transport-Security',
+    'Trailer',
+    'Transfer-Encoding',
+    'Vary',
+    'Via',
+    'Warning',
+    'WWW-Authenticate',
+    'X-Frame-Options',
+    'X-XSS-Protection',
+    'X-Content-Type-Options',
+    'X-Forwarded-Proto',
+    'X-Powered-By',
+    'X-UA-Compatible',
+)
+
+class UTC(datetime.tzinfo):
     """
-    HTTP错误类
+    tzinfo 是一个基类，用于给datetime对象分配一个时区
+    使用方式是 把这个子类对象传递给datetime.tzinfo属性
+    传递方法有2种：
+        １.　初始化的时候传入
+            datetime(2009,2,17,19,10,2,tzinfo=tz0)
+        ２.　使用datetime对象的 replace方法传入，从新生成一个datetime对象
+            datetime.replace(tzinfo= tz0）
+
+
     """
-    pass
+    def __init__(self, utc):
+        utc = str(utc.strip().upper())      # 删除空白字符 并转化为大写
+        """
+        s.strip(rm)        删除s字符串中开头、结尾处，位于 rm删除序列的字符
+        s.lstrip(rm)       删除s字符串中开头处，位于 rm删除序列的字符
+        s.rstrip(rm)      删除s字符串中结尾处，位于 rm删除序列的字符
+        当rm为空时，默认删除空白符（包括'\n', '\r',  '\t',  ' ')
+        """
+        mt = _RE_TZ.match(utc)	# 使用re.match 判断是否匹配成功常用方法
+        if mt:
+            minus = mt.group(1) == '-'
+            h = int(mt.group(2))
+            m = int(mt.group(3))
+            if minus:
+                h, m = (-h), (-m)
+            self._utcoffset = datetime.timedelta(hours=h, minutes=m)
+            self._tzname = 'UTC%s' % utc
+        else:
+            raise ValueError('bad utc time zone')
+
+    def utcoffset(self, dt):
+        """
+        表示与标准时区的 偏移量
+
+        """
+        return self._utcoffset
+
+    def dst(self, dt):
+        """
+         Daylight Saving Time 夏令时
+        :param dt:
+        :return:
+        """
+        return _TIMEDELTA_ZERO
+
+    def tzname(self, dt):
+        """
+        在时区的名字
+        :param dt:
+        :return:
+        """
+        return self._tzname
+
+    def __str__(self):
+        return 'UTC timezone info object (%s)' % self._tzname
+
+    __repr__ = __str__      # __repr__返回程序开发者看到的字符串  直接显示变量调用的为 __repr__
+
+UTC_0 = UTC('+00:00')
+
+class _HttpError(Exception):
+    """
+    HttpError that defines http error code.
+    """
+    def __init__(self):
+        super(_HttpError, self).__init__()
+        self.status = '%d %s' % (code, _REPONSE_STATUSES[code])
+        self._headers = None
+
+    def header(self, name, value):
+        """
+        添加header ,如果header为空则添加powered by header
+        :param name:
+        :param value:
+        :return:
+        """
+        if not self._headers:
+            self._headers = [_HEADER_X_POWERED_BY]
+        self._headers.append((name,value))
+
+    @property
+    def headers(self):
+        """
+        使用setter方法实现的 header属性
+        :return:
+        """
+        if hasattr(self, '_headers'):
+            return self._headers
+        return []
+
+    def __str__(self):
+        return self.status
+
+    __repr__ = __str__
+
+class _RedirectError(_HttpError):
+    """
+     RedirectError that defines http redirect code.
+    """
+    def __init__(self, code, location):
+        super(_RedirectError, self).__init__(code)
+        self.location = location
+
+    def __str__(self):
+        return '%s, %s' % (self.status, self.location)
+
+    __repr__ = __str__
+
+class HttpError(object):
+    """
+     HTTP Exceptions
+    """
+    @staticmethod
+    def badrequest():
+        """
+        Send a bad request response.
+        :return:
+        """
+        return _HttpError(400)
+    @staticmethod
+    def unauthorized():
+        """
+        Send an unauthorized response.
+
+        """
+        return _HttpError(401)
+
+    @staticmethod
+    def forbidden():
+        """
+        Send a forbidden response.
+
+        """
+        return _HttpError(403)
+
+    @staticmethod
+    def notfound():
+        """
+        Send a not found response.
+
+        """
+        return _HttpError(404)
+
+    @staticmethod
+    def conflict():
+        """
+        Send a conflict response.
+
+        """
+        return _HttpError(409)
+
+    @staticmethod
+    def internalerror():
+        """
+        Send an internal error response.
+        """
+
+        return _HttpError(500)
+
+    @staticmethod
+    def redirect(location):
+        """
+        Do permanent redirect.
+
+        """
+        return _RedirectError(301, location)
+
+    @staticmethod
+    def found(location):
+        """
+        Do temporary redirect.
+
+        """
+        return _RedirectError(302, location)
+
+    @staticmethod
+    def seeother(location):
+        """
+        Do temporary redirect.
+
+        """
+        return _RedirectError(303, location)
+
+_RESPONSE_HEADER_DICT = dict(zip(map(lambda x: x.upper(), _RESPONSE_HEADERS), _RESPONSE_HEADERS))
+######################
+# x = [1, 2, 3]
+# y = [4, 5, 6]
+# z = [7, 8, 9]
+# xyz = zip(x, y, z)
+# print xyz
+#####################
+
+
+class MultipartFile(object):
+    """
+     Multipart file storage get from request input.
+    """
+
+    def __init__(self, storage):
+        self.filname = utils.to_unocode(storage.filename)
+        self.file = storage.file
+
 
 class Request(object):
     """
-    request对象
+    request对象 获取所有HTTP请求信息
     """
+    def __init__(self, environ):
+        """
+        environ  wsgi处理函数里面的那个 environ
+        wsgi server调用 wsgi 处理函数时传入的
+        包含了用户请求的所有数据
+        :param environ:环境
+        :return:
+        """
+        self._environ = environ
+
+    def _parse_input(self):
+        """
+        将通过wsgi 传入过来的参数，解析成一个字典对象 返回
+        比如： Request({'REQUEST_METHOD':'POST', 'wsgi.input':StringIO('a=1&b=M%20M&c=ABC&c=XYZ&e=')})
+            这里解析的就是 wsgi.input 对象里面的字节流
+        :return:
+        """
+        def _convert(item):
+            if isinstance(item, list):
+                return [utils.to_unicode(i.value) for i in item ]
+            if item.filename:
+                return MultipartFile(item)
+            return utils.to_unocode(item.value)
+        fs = cgi.FieldStorage(fp=self._environ['wsgi.input'], environ=self._environ, keep_blank_values=True)
+        inputs = dict()
+        for key in fs:
+            inputs[key] = _convert(fs[key])
+        return inputs
+
+    def _get_raw_input(self):
+        """
+        将从wsgi解析出来的 数据字典，添加为Request对象的属性
+        然后 返回该字典
+        :return:
+        """
+        if not hasattr(self, '_raw_input'):
+            self._raw_input = self._parse_input()
+        return self._raw_input
+
+    def __getattr__(self, key):
+        """
+        实现通过键值访问Request对象里面的数据，如果该键有多个值，则返回第一个值
+        如果键不存在，这会 raise KyeError
+        :param key:
+        :return:
+        """
+        r = self._get_raw_input()[key]
+        if isinstance(r, list):
+            return r[0]
+        return r
+
+
+
+
     def get(self, key, default=None):
         """
         根据key返回value
+        和上面的__getitem__一样(request[key]),但如果没有找到key,则返回默认值。
         :param key:
         :param default:
         :return:
         """
-        pass
+        r = self._get_raw_input().get(key, default)
+        if isinstance(r, list):
+            return r[0]
+        return r
 
-    def input(self):
+    def gets(self, key):
         """
-        返回key-value 的dict
+        获取指定建的多个值
+        :param key:
         :return:
         """
-        pass
+        r = self._get_raw_input()[key]
+        if isinstance(r, list):
+            return r[:]
+        return [r]
+
+
+    def input(self, **kw):
+        """
+        返回key-value 的dict
+        返回一个由传入的数据和从environ里取出的数据 组成的Dict对象，Dict对象的定义 见db模块
+        :return:
+        """
+        copy = Dict(**kw)
+        raw = self._get_raw_input()
+        for k, v in raw.iteritems():
+            copy[k] = v[0] if isinstance(v, list) else v
+        return copy
+
+    def get_body(self):
+        """
+        从HTTP POST 请求中取得 body里面的数据，返回为一个str对象
+        :return:
+        """
+        fp = self._environ['wsgi.input']
+        return fp.read()
+
+    @property
+    def remote_addr(self):
+        """
+        Get remote addr. Return '0.0.0.0' if cannot get remote_addr.
+        :return:
+        """
+        return self._environ.get('REMOTE_ADDR', '0.0.0.0')
+
+    @property
+    def document_root(self):
+        """
+         Get raw document_root as str. Return '' if no document_root.
+        :return:
+        """
+        return self._environ.get('DOCUMENT_ROOT', '')
+
+    @property
+    def query_string(self):
+        """
+        Get raw query string as str. Return '' if no query string.
+        :return:
+        """
+        return self._environ.get('QUERY_STRING', '')
+
+    @property
+    def environ(self):
+        """
+        Get raw environ as dict, both key, value are str.
+        :return:
+        """
+        return self._environ
+
+    @property
+    def request_method(self):
+        """
+        Get request method. The valid returned values are 'GET', 'POST', 'HEAD'.
+        :return:
+        """
+        return self._environ['REQUEST_METHOD']
 
     @property
     def path_info(self):
@@ -69,85 +514,508 @@ class Request(object):
         返回URL的path
         :return:
         """
-        pass
+        return urllib.unquote(self._environ.get('PATH_INFO', ''))
+
+    @property
+    def host(self):
+        """
+        Get request host as str. Default to '' if cannot get host..
+        :return:
+        """
+        return self._environ.get('HTTP_HOST', '')
+
+    @property
+    def _get_headers(self):
+        """
+        从environ里 取得HTTP_开通的 header
+        :return:
+        """
+        if not hasattr(self, '_headers'):
+            hdrs = {}
+            for k, v in self._environ.iteritems():
+                if k.startswith('HTTP_'):
+                    hdrs[k[5:].replace('_', '-').upper()] = v.decode('utf-8')
+            self._headers = hdrs
+        return self._headers
 
     @property
     def headers(self):
         """
         返回HTTP Hearders
+        获取所有的header， setter实现的属性
         :return:
         """
-        pass
+        return dict(**self._get_headers())
+
+    def header(self, header, default=None):
+        """
+        获取指定的header的值
+        :param header:
+        :param default:
+        :return:
+        """
+        return self._get_headers().get(header.upper(), default)
+
+    def _get_cookies(self):
+        """
+         从environ里取出cookies字符串，并解析成键值对 组成的字典
+        :return:
+        """
+        if not hasattr(self, '_cookies'):
+            cookies = {}
+            cookie_str = self._environ.get('HTTP_COOKIE')
+            if cookie_str:
+                for c in cookie_str.split(';'):
+                    pos = c.find('=')
+                    if pos > 0:
+                        cookies[c[:pos].strip()] = urllib.unquote(c[pos+1:])
+            self._cookies = cookies
+        return self._cookies
+
+    @property
+    def cookies(self):
+        """
+         setter 以Dict对象返回cookies
+        :return:
+        """
+        return Dict(**self._get_cookies())
 
     def cookie(self, name, default=None):
         """
+        获取指定的cookie
         根据key 返回Cookie value
         :param name:
         :param default:
         :return:
         """
-        pass
+        return self._get_cookies().get(name, default)
 
 class Response(object):
     """
     response 对象
     """
-    def set_header(self, key, value):
+
+    def __init__(self):
+        self._status = '200 OK'
+        self._headers = {'CONTENT-TYPE': 'text/html; charset=utf-8'}
+
+    def unset_header(self, name):
+        """
+        删除指定的header
+        :param name:
+        :return:
+        """
+        key = name.upper()
+        if key not in _RESPONSE_HEADER_DICT:
+            key = name
+        if key in self._headers:
+            del self._headers[key]
+
+    def set_header(self, name, value):
         """
         设置header
+        给指定的header 赋值
         :param key:
         :param value:
         :return:
         """
-        pass
+        key = name.upper()
+        if key not in _RESPONSE_HEADER_DICT:
+            key = name
+        self._headers[key] = utils.to_str(value)
 
-    def set_cookie(self, name, value, max_age=None, expires=None, path='/'):
+    def header(self, name):
         """
-        设置Cookie
+        获取Response Header 里单个 Header的值， 非大小写敏感
         :param name:
-        :param value:
-        :param max_age:
-        :param expires:
-        :param path:
         :return:
         """
-        pass
+        key = name.upper()
+        if key not in _RESPONSE_HEADER_DICT:
+            key = name
+        return self._headers.get(key)
+
+    @property
+    def headers(self):
+        """
+        setter 构造的属性，以[(key1, value1), (key2, value2)...] 形式存储 所有header的值，
+        包括cookies的值
+        :return:
+        """
+        L = [(_RESPONSE_HEADER_DICT.get(k, k), v) for k, v in self._headers.iteritems()]
+        if hasattr(self, '_cookies'):
+            for v in self._cookies.itervalues():
+                L.append(('Set-Cookie',v))
+        L.append(_HEADER_X_POWERED_BY)
+        return L
+
+    @property
+    def content_type(self):
+        """
+        setter 方法实现的属性，用户保存header： Content-Type的值
+        :return:
+        """
+        return self.header('CONTENT-TYPE')
+
+    @content_type.setter
+    def content_type(self, value):
+        """
+        让content_type 属性可写， 及设置Content-Type Header
+        :param value:
+        :return:
+        """
+        if value:
+            self.set_header('CONTENT-TYPE', value)
+        else:
+            self.unset_header('CONTENT-TYPE')
+
+    @property
+    def content_length(self):
+        """
+        获取Content-Length Header 的值
+        :return:
+        """
+        return self.header('CONTENT-LENGTH')
+
+    @content_length.setter
+    def content_length(self, value):
+        """
+        设置Content-Length Header 的值
+        :param value:
+        :return:
+        """
+        self.set_header('CONTENT-LENGTH', str(value))
+
+    def delete_cookie(self, name):
+        """
+        Delete a cookie immediately.
+        :param name:the cookie name.
+        :return:
+        """
+        self.set_cookie(name, '__deleted__', expires=0)
+
+
+
+    def set_cookie(self, name, value, max_age=None, expires=None, path='/', domain=None, secure=False, http_only=True):
+        """
+        设置Cookie
+        Set a cookie.
+        :param name:the cookie name.
+        :param value:the cookie value.
+        :param max_age: optional, seconds of cookie's max age.
+        :param expires: optional, unix timestamp, datetime or date object that indicate an absolute time of the
+                   expiration time of cookie. Note that if expires specified, the max_age will be ignored.
+        :param path:the cookie path, default to '/'.
+        :param domain: he cookie domain, default to None.
+        :param secure: if the cookie secure, default to False.
+        :param http_only: if the cookie is for http only, default to True for better safty
+                     (client-side script cannot access cookies with HttpOnly flag).
+        :return:
+        """
+        if not hasattr(self, '_cookies'):
+            self._cookies = {}
+        L = ['%s=%s' % (utils.quote(name), utils.quote(value))]
+        if expires is not None:
+            if isinstance(expires, (float, int, long)):
+                L.append('Expires=%s' % datetime.datetime.fromtimestamp(expires, UTC_0).strftime('%a, %d-%b-%Y %H:%M:%S GMT'))
+            if isinstance(expires, (datetime.date, datetime.datetime)):
+                L.append('Expires=%s' % expires.astimezone(UTC_0).strftime('%a, %d-%b-%Y %H:%M:%S GMT'))
+        elif isinstance(max_age, (int, long)):
+            L.append('Max-Age=%d' % max_age)
+        L.append('Path=%s' % path)
+        if domain:
+            L.append('Domain=%s' % domain)
+        if secure:
+            L.append('Secure')
+        if http_only:
+            L.append('HttpOnly')
+        self._cookies[name] = ';'.join(L)
+
+    def unset_cookie(self, name):
+        """
+        Unset a cookie.
+        :param name:
+        :return:
+        """
+        if hasattr(self, '_cookies'):
+            if name in self._cookies:
+                del self._cookies[name]
+
+    @property
+    def status_code(self):
+        """
+        Get response status code as int.
+        :return:
+        """
+        return int(self._status[:3])
 
     @property
     def status(self):
         """
         设置status
+        Get response status. Default to '200 OK'.
         :return:
         """
-        pass
+        return self._status
 
     @status.setter
     def status(self, value):
-        pass
+        """
+        Set response status as int or str.
+        :param value:
+        :return:
+        """
+        if isinstance(value, (int, long)):
+            if 100 <= value <= 999:
+                st = _RESPONSE_STATUSES.get(value, '')
+                if st:
+                    self._status = '%d %s' % (value, st)
+                else:
+                    self._status = str(value)
+            else:
+                raise ValueError('Bad response code: %d' % value)
+        elif isinstance(value, basestring):     # 判断value 是否为  str 或者 unicode
+            if isinstance(value, unicode):
+                value = value.encode('utf-8')
+            if _RE_REPONSE_STATUS.match(value):
+                self._status = value
+            else:
+                raise ValueError('Bad response code: %s' % value)
+        else:
+            raise TypeError('Bad type of response code.')
+
+
+#################################################################
+# 实现URL路由功能
+# 将URL 映射到 函数上
+#################################################################
+
+_re_route = re.compile(r'(:[a-zA-Z_]\w*)')      # 用于捕获变量的re
 
 def get(path):
     """
+    @get decorator.
     定义GET
     :param path:
     :return:
     """
-    pass
+    def _decorator(func):
+        func.__web_route__ = path
+        func.__web_method__ = 'GET'
+        return func
+    return _decorator
 
 def post(path):
     """
+    @post decorator.
     定义POST
     :param path:
     :return:
     """
-    pass
+    def _decorator(func):
+        func.__web_route__ = path
+        func.__web_method__ = 'POST'
+        return func
+    return _decorator
 
-def view(path):
+def _build_regex(path):
     """
-    定义模板
+    用于将路径转换成正则表达式，并捕获其中的参数
     :param path:
     :return:
     """
+    re_list = ['^']
+    var_list = []
+    is_var = False
+    for v in _re_route.split(path):
+        if is_var:
+            var_name = v[1:]
+            var_list.append(var_name)
+            re_list.append(r'(?P<%s>[^\/]+)' % var_name)
+        else:
+            s = ''
+            for ch in v:
+                if '0' <= ch <= '9':
+                    s += ch
+                elif 'A' <= ch <= 'Z':
+                    s += ch
+                elif 'a' <= ch <= 'z':
+                    s += ch
+                else:
+                    s = s + '\\' + ch
+            re_list.append(s)
+        is_var = not is_var
+    re_list.append('$')
+    return ''.join(re_list)
+
+def _static_file_generator(fpath, block_size=8192):
+    """
+    读取静态文件的一个生成器
+    :param fpath:
+    :param block_size:
+    :return:
+    """
+    with open(fpath, 'rb') as f:
+        block = f.read(block_size)
+        while block:
+            yield block
+            block = f.read(block_size)
+
+class Route(object):
+    """
+    动态路由对象，处理 装饰器捕获的url 和 函数
+    比如：
+            @get('/:id')
+                def index(id):
+                pass
+    在构造器中 path、method、is_static、route 和url相关
+    而 func 则指的装饰器里的func，比如上面的index函数
+    """
+
+    def __init__(self, func):
+        """
+        path： 通过method的装饰器捕获的path
+        method： 通过method装饰器捕获的method
+        is_static： 路径是否含变量，含变量为True
+        route：动态url（含变量）则捕获其变量的 re
+        :param func: 方法装饰器里定义的函数
+        :return:
+        """
+        self.path = func.__web_route__
+        self.method = func.__web_method__
+        self.is_static = _re_route.search(self.path) is None
+        if not self.is_static:
+            self.route = re.compile(_build_regex(self.path))
+        self.func = func
+
+    def match(self, url):
+        """
+        传入url，返回捕获的变量
+        :param url:
+        :return:
+        """
+        m = self.route.match(url)
+        if m:
+            return m.group()
+        return None
+
+    def __call__(self, *args):
+        """
+        实例对象直接调用时，执行传入的函数对象
+        :param args:
+        :return:
+        """
+        return self.func(*args)
+
+    def __str__(self):
+        if self.is_static:
+            return 'Route(static,%s,path=%s)' % (self.method, self.path)
+        return 'Route(dynamic,%s,path=%s)' % (self.method, self.path)
+
+    __repr__ = __str__
+
+class StaticFileRoute(object):
+    """
+     静态文件路由对象，和Route相对应
+    """
+
+    def __init__(self):
+        self.method = 'GET'
+        self.is_static = False
+        self.route = re.compile('^/static/(.+)$')
+
+    def match(self, url):
+        if url.startswith('/static/'):      # startswith 匹配头 endswith匹配尾
+            return (url[1:])
+        return None
+
+    def __call__(self, *args):
+        fpath = os.path.join(ctx.application.document_root, args[0])
+        if not os.path.isfile(fpath):
+            raise HttpError.notfound()
+        fext = os.path.splitext(fpath)[1]
+        ctx.response.content_type = mimetypes.types_map.get(fext.lower(), 'application/octet-stream')
+        return _static_file_generator(fpath)
+
+#################################################################
+# 实现视图功能
+# 主要涉及到模板引擎和View装饰器的实现
+#################################################################
+
+def view(path):
+    """
+    定义模板-
+    被装饰的函数 需要返回一个字典对象，用于渲染
+    装饰器通过Template类将 path 和 dict 关联在一个 Template对象上
+    :param path:
+    :return:
+    """
+    def _decorator(func):
+       @functools.wraps(func)
+       def _wrapper( *args, **kw):
+           r = func(*args, **kw)
+           if isinstance(r, dict):
+               logging.info('return Template')
+               return Template(path, **r)
+           raise ValueError('Expect return a dict when using @view() decorator.')
+       return _wrapper
+    return _decorator
+
+class Template(object):
+    def __init__(self, template_name, **kw):
+        """
+        Init a template object with template name, model as dict, and additional kw that will append to model.
+
+        :param template_name:
+        :param kw:
+        :return:
+        """
+        self.template_name = template_name
+        self.model = dict(**kw)
+
+
+class TemplateEngine(object):
+    """
+    定义末班引擎
+    """
+    def __call__(self, path, model):
+        return '<!-- override this method to render template -->'
+
+class Jinja2TemplateEngine(TemplateEngine):
+    """
+    渲染使用jinja2模板引擎
+    """
+    def __init__(self, templ_dir, **kw):
+        from jinja2 import Environment, FileSystemLoader
+        if 'autoescape' not in kw:
+            kw['autoescape'] = True
+        self._env = Environment(loader=FileSystemLoader(templ_dir), **kw)
+
+    def __call__(self, path, model):
+        return self._env.get_template(path).render(**model).encode('utf-8')
+
+def _debug():
     pass
+
+def _default_error_handler(e, start_response, is_debug):
+    """
+    用于处理异常，主要是响应一个异常页面
+    :param e:
+    :param start_response: wsgi里面的 start_response 函数
+    :param is_debug:
+    :return:
+    """
+    if isinstance(e, HttpError):
+        logging.info('HttpError: %s' % e.status)
+        headers = e.headers[:]
+        headers.append(('Content-Type', 'text/html'))
+        start_response(e.status, headers)
+        return ('<html><body><h1>%s</h1></body></html>' % e.status)
+    logging.exception('Exception:')
+    start_response('500 Internal Server Error', [('Content-Type', 'text/html'), _HEADER_X_POWERED_BY])
+    if is_debug:
+        return _debug()
+    return ('<html><body><h1>500 Internal Server Error</h1><h3>%s</h3></body></html>' % str(e))
 
 def interceptor(pattern):
     """
@@ -157,23 +1025,6 @@ def interceptor(pattern):
     """
     pass
 
-class TemplateEngine(object):
-    """
-    定义末班引擎
-    """
-    def __call__(self, path, model):
-        pass
-
-class Jinja2TemplateEngine(TemplateEngine):
-    """
-    渲染使用jinja2模板引擎
-    """
-    def __init__(self, templ_dir, **kw):
-        from jinja2 import Environment, FileSystemLoader
-        self._env = Environment(loader=FileSystemLoader(templ_dir), **kw)
-
-    def __call__(self, path, model):
-        return self._env.get_template(path).render(**model).encode('utf-8')
 
 class WSGIApplication(object):
     """
