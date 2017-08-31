@@ -226,9 +226,9 @@ class _HttpError(Exception):
     """
     HttpError that defines http error code.
     """
-    def __init__(self):
+    def __init__(self, code):
         super(_HttpError, self).__init__()
-        self.status = '%d %s' % (code, _REPONSE_STATUSES[code])
+        self.status = '%d %s' % (code, _RESPONSE_STATUSES[code])
         self._headers = None
 
     def header(self, name, value):
@@ -281,6 +281,7 @@ class HttpError(object):
         :return:
         """
         return _HttpError(400)
+
     @staticmethod
     def unauthorized():
         """
@@ -361,7 +362,7 @@ class MultipartFile(object):
     """
 
     def __init__(self, storage):
-        self.filname = utils.to_unocode(storage.filename)
+        self.filename = utils.to_unicode(storage.filename)
         self.file = storage.file
 
 
@@ -391,7 +392,7 @@ class Request(object):
                 return [utils.to_unicode(i.value) for i in item ]
             if item.filename:
                 return MultipartFile(item)
-            return utils.to_unocode(item.value)
+            return utils.to_unicode(item.value)
         fs = cgi.FieldStorage(fp=self._environ['wsgi.input'], environ=self._environ, keep_blank_values=True)
         inputs = dict()
         for key in fs:
@@ -1101,8 +1102,6 @@ def _load_module(module_name):
 # 上面的所有的功能都是对 wsgi 处理函数的装饰
 #################################################################
 
-def badrequest():
-    pass
 
 
 class WSGIApplication(object):
@@ -1236,7 +1235,7 @@ class WSGIApplication(object):
                     if args:
                         return fn(*args)
                 raise HttpError.notfound()
-            raise badrequest()
+            raise HttpError.badrequest()
 
         fn_exec = _build_interceptor_chain(fn_route(), *self._interceptors)
 
