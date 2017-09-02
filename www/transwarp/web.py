@@ -174,12 +174,12 @@ class UTC(datetime.tzinfo):
     """
     def __init__(self, utc):
         utc = str(utc.strip().upper())      # 删除空白字符 并转化为大写
-        """
-        s.strip(rm)        删除s字符串中开头、结尾处，位于 rm删除序列的字符
-        s.lstrip(rm)       删除s字符串中开头处，位于 rm删除序列的字符
-        s.rstrip(rm)      删除s字符串中结尾处，位于 rm删除序列的字符
-        当rm为空时，默认删除空白符（包括'\n', '\r',  '\t',  ' ')
-        """
+        # """
+        # s.strip(rm)        删除s字符串中开头、结尾处，位于 rm删除序列的字符
+        # s.lstrip(rm)       删除s字符串中开头处，位于 rm删除序列的字符
+        # s.rstrip(rm)      删除s字符串中结尾处，位于 rm删除序列的字符
+        # 当rm为空时，默认删除空白符（包括'\n', '\r',  '\t',  ' ')
+        # """
         mt = _RE_TZ.match(utc)	# 使用re.match 判断是否匹配成功常用方法
         if mt:
             minus = mt.group(1) == '-'
@@ -1200,11 +1200,12 @@ class WSGIApplication(object):
         from wsgiref.simple_server import make_server
         logging.info('application (%s) will start at %s:%s...' % (self._document_root, host, port))
         server = make_server(host, port, self.get_wsgi_application(debug=True))
-        server.server_forever()
+        server.serve_forever()
 
     def get_wsgi_application(self, debug=False):
         """
-        返回WSGI处理函数
+        wsgiapplication API
+        :param debug:
         :return:
         """
         self._check_not_running()
@@ -1217,7 +1218,7 @@ class WSGIApplication(object):
         def fn_route():
             request_method = ctx.request.request_method
             path_info = ctx.request.path_info
-            if request_method == 'GET':
+            if request_method=='GET':
                 fn = self._get_static.get(path_info, None)
                 if fn:
                     return fn()
@@ -1237,14 +1238,12 @@ class WSGIApplication(object):
                 raise HttpError.notfound()
             raise HttpError.badrequest()
 
-        fn_exec = _build_interceptor_chain(fn_route(), *self._interceptors)
+        fn_exec = _build_interceptor_chain(fn_route, *self._interceptors)
+        fn_exec = _build_interceptor_chain(fn_route, *self._interceptors)
 
         def wsgi(env, start_response):
             """
             WSGI 处理函数
-            :param env:
-            :param start_response:
-            :return:
             """
             ctx.application = _application
             ctx.request = Request(env)
