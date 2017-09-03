@@ -409,7 +409,7 @@ class Request(object):
             self._raw_input = self._parse_input()
         return self._raw_input
 
-    def __getattr__(self, key):
+    def __getitem__(self, key):
         """
         实现通过键值访问Request对象里面的数据，如果该键有多个值，则返回第一个值
         如果键不存在，这会 raise KyeError
@@ -420,8 +420,6 @@ class Request(object):
         if isinstance(r, list):
             return r[0]
         return r
-
-
 
 
     def get(self, key, default=None):
@@ -943,24 +941,6 @@ class StaticFileRoute(object):
 # 主要涉及到模板引擎和View装饰器的实现
 #################################################################
 
-def view(path):
-    """
-    定义模板-
-    被装饰的函数 需要返回一个字典对象，用于渲染
-    装饰器通过Template类将 path 和 dict 关联在一个 Template对象上
-    :param path:
-    :return:
-    """
-    def _decorator(func):
-       @functools.wraps(func)
-       def _wrapper( *args, **kw):
-           r = func(*args, **kw)
-           if isinstance(r, dict):
-               logging.info('return Template')
-               return Template(path, **r)
-           raise ValueError('Expect return a dict when using @view() decorator.')
-       return _wrapper
-    return _decorator
 
 class Template(object):
     def __init__(self, template_name, **kw):
@@ -1017,6 +997,26 @@ def _default_error_handler(e, start_response, is_debug):
     if is_debug:
         return _debug()
     return ('<html><body><h1>500 Internal Server Error</h1><h3>%s</h3></body></html>' % str(e))
+
+def view(path):
+    """
+    定义模板-
+    被装饰的函数 需要返回一个字典对象，用于渲染
+    装饰器通过Template类将 path 和 dict 关联在一个 Template对象上
+    :param path:
+    :return:
+    """
+    def _decorator(func):
+        @functools.wraps(func)
+        def _wrapper(*args, **kw):
+            r = func(*args, **kw)
+            if isinstance(r, dict):
+                logging.info('return Template')
+                return Template(path, **r)
+            raise ValueError('Expect return a dict when using @view() decorator.')
+        return _wrapper
+    return _decorator
+
 
 #################################################################
 # 实现URL拦截器
@@ -1093,7 +1093,6 @@ def _load_module(module_name):
     from_module = module_name[:last_dot]
     import_module = module_name[last_dot+1:]
     m = __import__(from_module, globals(), locals(), [import_module])
-    print m
     return getattr(m, import_module)
 
 #################################################################
@@ -1157,10 +1156,10 @@ class WSGIApplication(object):
         logging.info('Add module: %s' % m.__name__)
         for name in dir(m):
             fn = getattr(m, name)
-            if callable(fn) and hasattr(fn, '__web_route__') and hasattr(fn, '__web_methd'):
+            if callable(fn) and hasattr(fn, '__web_route__') and hasattr(fn, '__web_method__'):
                 self.add_url(fn)
 
-    def add_url(self,func):
+    def add_url(self, func):
         """
         添加一个URL定义
         :param func:
@@ -1178,7 +1177,7 @@ class WSGIApplication(object):
                 self._get_dynamic.append(route)
             if route.method == 'POST':
                 self._post_dynamic.append(route)
-        logging.info('Add route: %s' % str(func))
+        logging.info('Add route: %s' % str(route))
 
     def add_interceptor(self, func):
         """

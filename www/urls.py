@@ -8,3 +8,4 @@ from models import User, Blog, Comment
 def test_users():
     users = User.find_all()
     return dict(users = users)
+
