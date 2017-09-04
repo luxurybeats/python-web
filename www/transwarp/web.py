@@ -389,7 +389,7 @@ class Request(object):
         """
         def _convert(item):
             if isinstance(item, list):
-                return [utils.to_unicode(i.value) for i in item ]
+                return [utils.to_unicode(i.value) for i in item]
             if item.filename:
                 return MultipartFile(item)
             return utils.to_unicode(item.value)
@@ -523,7 +523,6 @@ class Request(object):
         """
         return self._environ.get('HTTP_HOST', '')
 
-    @property
     def _get_headers(self):
         """
         从environ里 取得HTTP_开通的 header
@@ -533,6 +532,7 @@ class Request(object):
             hdrs = {}
             for k, v in self._environ.iteritems():
                 if k.startswith('HTTP_'):
+                    # convert 'HTTP_ACCEPT_ENCODING' to 'ACCEPT-ENCODING'
                     hdrs[k[5:].replace('_', '-').upper()] = v.decode('utf-8')
             self._headers = hdrs
         return self._headers
@@ -925,7 +925,7 @@ class StaticFileRoute(object):
 
     def match(self, url):
         if url.startswith('/static/'):      # startswith 匹配头 endswith匹配尾
-            return (url[1:])
+            return (url[1:],)
         return None
 
     def __call__(self, *args):
@@ -1237,7 +1237,7 @@ class WSGIApplication(object):
                 raise HttpError.notfound()
             raise HttpError.badrequest()
 
-        fn_exec = _build_interceptor_chain(fn_route, *self._interceptors)
+
         fn_exec = _build_interceptor_chain(fn_route, *self._interceptors)
 
         def wsgi(env, start_response):

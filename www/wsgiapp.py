@@ -10,6 +10,7 @@ from config import configs
 # 初始化数据库:
 db.create_engine(**configs.db)
 
+
 # 创建一个WSGIApplication:
 wsgi = WSGIApplication(os.path.dirname(os.path.abspath(__file__)))
 

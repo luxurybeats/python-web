@@ -450,7 +450,7 @@ class Model(dict):
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
-    db.create_engine('root','123456', 'test','localhost')
+    db.create_engine('root','123456', 'awesome','localhost')
     db.update('drop table  user')
     db.update('create table user (id int primary key, name text, email text, passwd text, last_modified real)')
     import doctest
