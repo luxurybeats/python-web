@@ -362,6 +362,16 @@ class Model(dict):
         return [cls(**d) for d in L]
 
     @classmethod
+    def find_all_desc(cls, *args):
+        """
+        查询所有字段， 将结果以一个列表返回
+        :param args:
+        :return:
+        """
+        L = db.select('select * from `%s` order by id desc' % cls.__table__)
+        return [cls(**d) for d in L]
+
+    @classmethod
     def find_by(cls, where, *args):
         """
         通过where语句进行条件查询，将结果以一个列表返回
@@ -371,6 +381,8 @@ class Model(dict):
         """
         L = db.select('select * from `%s` %s' % (cls.__table__, where), *args)
         return [cls(**d) for d in L]
+
+
 
     @classmethod
     def count_all(cls):

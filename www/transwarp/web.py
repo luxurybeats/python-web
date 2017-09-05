@@ -972,6 +972,9 @@ class Jinja2TemplateEngine(TemplateEngine):
             kw['autoescape'] = True
         self._env = Environment(loader=FileSystemLoader(templ_dir), **kw)
 
+    def add_filter(self, name, fn_filter):
+        self._env.filters[name] = fn_filter
+
     def __call__(self, path, model):
         return self._env.get_template(path).render(**model).encode('utf-8')
 
