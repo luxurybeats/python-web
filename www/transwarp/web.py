@@ -356,6 +356,7 @@ _RESPONSE_HEADER_DICT = dict(zip(map(lambda x: x.upper(), _RESPONSE_HEADERS), _R
 #####################
 
 
+
 class MultipartFile(object):
     """
      Multipart file storage get from request input.
@@ -1039,10 +1040,10 @@ def _build_pattern_fn(pattern):
     """
     m = _RE_INTERCEPTOR_STARTS_WITH.match(pattern)
     if m:
-        return lambda p: p.startwith(m.group(1))
+        return lambda p: p.startswith(m.group(1))
     m = _RE_INTERCEPTOR_END_WITH.match(pattern)
     if m:
-        return lambda p: p.endwith(m.group(1))
+        return lambda p: p.endswith(m.group(1))
     raise ValueError('Invalid pattern definition in interceptor.')
 
 def interceptor(pattern='/'):

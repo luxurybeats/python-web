@@ -69,7 +69,7 @@ class _LasyConnection(object):
     def cursor(self):
         if self.connection is None:
             _connection = engine.connect()
-            logging.info('[CONNECTION] [POEN] connection <%s>...' % hex(id(_connection)))
+            logging.info('[CONNECTION] [OPEN] connection <%s>...' % hex(id(_connection)))
             self.connection = _connection
         return self.connection.cursor()
 
